@@ -297,6 +297,55 @@ const hydrateCats=tplCats=>CATS.map(cat=>{
 });
 const freshCats=cats=>cats.map(c=>({...c,services:c.services.map(s=>({...s,id:uid()}))}));
 
+/* ── BUILD QUOTE JSON để gửi sang TravelMaster-Core ── */
+const buildQuoteJSON = (info, cats, cfg, rates) => {
+  return {
+    quote_id: info.tourCode || `QT-${Date.now()}`,
+    confirmed_at: new Date().toISOString(),
+    customer: {
+      name:     info.clientName || "",
+      phone:    "",                        // thêm field phone vào info nếu cần
+      pax:      num(info.adults) + num(info.children),
+      pax_detail: {
+        adult: num(info.adults),
+        child: num(info.children),
+      },
+    },
+    tour: {
+      name:        info.tourName || "",
+      start_date:  info.startDate || "",
+      end_date:    info.endDate   || "",
+      destination: info.tourName  || "",   // hoặc thêm field destination riêng
+      prepared_by: info.preparedBy || "",
+      notes:       info.notes || "",
+    },
+    services: cats.flatMap(cat =>
+      cat.services
+        .filter(s => s.name && num(s.qty) > 0)
+        .map(s => ({
+          category:   cat.id,              // "accommodation", "transport", v.v.
+          type:       cat.id,
+          name:       s.name,
+          qty:        num(s.qty),
+          unit_price: num(s.unitPrice),
+          currency:   s.currency || "VND",
+          unit_price_vnd: toVND(num(s.unitPrice), s.currency || "VND", rates),
+          times:      num(s.times),
+          total_vnd:  stotVND(s, rates),
+          note:       s.note || "",
+        }))
+    ),
+    pricing: {
+      base_cost_vnd:    Math.round(cats.reduce((s,c) => s + c.services.reduce((x,sv) => x + stotVND(sv,rates), 0), 0)),
+      markup_pct:       num(cfg.markup),
+      discount_pct:     num(cfg.discount),
+      vat_pct:          num(cfg.vat),
+      selling_price_vnd: calcFinal(cats, cfg, rates),
+      display_currency: cfg.displayCur || "VND",
+    },
+  };
+};
+
 /* CSS builders */
 const inp=(ex={})=>({border:`1px solid ${C.border}`,borderRadius:6,padding:"7px 10px",fontSize:13,width:"100%",background:"#fafaf8",outline:"none",fontFamily:"inherit",color:C.text,...ex});
 const thS=(ex={})=>({background:C.creamD,color:C.navy,fontWeight:600,padding:"9px 12px",textAlign:"left",borderBottom:`2px solid ${C.border}`,fontSize:11,textTransform:"uppercase",letterSpacing:.4,...ex});
@@ -617,7 +666,24 @@ export default function App(){
   const add=id=>setCats(p=>p.map(c=>c.id===id?{...c,services:[...c.services,mkS()]}:c));
   const rm=(cid,sid)=>setCats(p=>p.map(c=>c.id===cid?{...c,services:c.services.filter(s=>s.id!==sid)}:c));
   const us=(cid,sid,k,v)=>setCats(p=>p.map(c=>c.id!==cid?c:{...c,services:c.services.map(s=>s.id!==sid?s:{...s,[k]:v})}));
+  const handleConfirmAndExport = async () => {
+  const payload = buildQuoteJSON(info, cats, cfg, rates);
 
+  // API Key lưu trong .env của Vite (file .env ở root TourQuotePro)
+  const API_KEY = import.meta.env.VITE_TRAVELMASTER_API_KEY;
+
+  try {
+    const res = await fetch(
+      import.meta.env.VITE_TRAVELMASTER_URL + "/api/import-quote/",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-API-Key": API_KEY,           // ← Gửi key trong header
+        },
+        body: JSON.stringify(payload),
+      }
+    );
   const totals=useMemo(()=>cats.map(c=>({id:c.id,tKey:c.tKey,icon:c.icon,subVND:c.services.reduce((s,x)=>s+stotVND(x,rates),0)})),[cats,rates]);
   const baseVND=totals.reduce((s,c)=>s+c.subVND,0);
   const aDiscVND=baseVND*(1-cfg.discount/100);
@@ -628,7 +694,8 @@ export default function App(){
 
   // Display values in chosen currency
   const dv=vnd=>fromVND(vnd,DC,rates);
-
+ }
+};
   /* Excel export */
   const exportXlsx=useCallback(()=>{
     const wb=XLSX.utils.book_new();
@@ -726,6 +793,7 @@ export default function App(){
             <button onClick={()=>setDrawer("saved")} style={{padding:"8px 13px",borderRadius:8,border:"1px solid rgba(232,213,163,.3)",cursor:"pointer",background:"rgba(255,255,255,.07)",color:C.goldL,fontSize:12,fontWeight:600,fontFamily:"inherit"}}>{t("btnSaved")}</button>
             <button onClick={exportXlsx} style={{padding:"8px 13px",borderRadius:8,border:"none",cursor:"pointer",background:C.green,color:"white",fontSize:12,fontWeight:600,fontFamily:"inherit"}}>📊 {t("btnExcel")?.replace("📊 ","")}</button>
             <button onClick={exportPDF} style={{padding:"8px 13px",borderRadius:8,border:"none",cursor:"pointer",background:C.gold,color:"white",fontSize:12,fontWeight:600,fontFamily:"inherit"}}>📄 PDF</button>
+            <button onClick={handleConfirmAndExport} style={{padding: "8px 13px", borderRadius: 8, border: "none", cursor: "pointer", background: "#c0392b", color: "white", fontSize: 12, fontWeight: 700, fontFamily: "inherit",}}> 🚀 Chốt & Điều hành</button>
           </div>
         </div>
 
